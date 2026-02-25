@@ -77,12 +77,17 @@ def start_instance(instance):
         except OSError:
             pid_file.unlink()  # Process doesn't exist, remove PID file
 
-    # 启动进程
+    # Start process
     env = os.environ.copy()
     env["UPSTREAM_URL"] = upstream
     env["PORT"] = str(port)
     env["HOST"] = "0.0.0.0"
     env["LOG_FILE"] = str(log_file)
+    env["PIDFILE"] = str(pid_file)  # Unique PID file per instance
+
+    # Limit workers to avoid OOM
+    if "WORKERS" not in env:
+        env["WORKERS"] = "4"  # Default to 4 workers per instance
 
     # 重定向日志
     log_handle = open(log_file, "a")

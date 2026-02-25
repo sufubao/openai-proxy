@@ -32,7 +32,7 @@ keepalive = int(os.getenv("KEEPALIVE", "5"))
 # Process management
 preload_app = True  # Preload app to save memory
 daemon = False  # Set to False in Docker
-pidfile = "gunicorn.pid"
+pidfile = os.getenv("PIDFILE", "gunicorn.pid")  # Use unique PID file per instance
 umask = 0o007
 user = None
 group = None
