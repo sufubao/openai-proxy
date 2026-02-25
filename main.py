@@ -1,6 +1,6 @@
 """
-OpenAI API 代理服务器 - 生产级版本
-支持：进程管理、连接池、限流熔断、监控、日志、优雅关闭
+OpenAI API Proxy - Production Grade
+Features: process management, connection pool, rate limiting, circuit breaker, monitoring, logging, graceful shutdown
 """
 import httpx
 from fastapi import FastAPI, Request, HTTPException
@@ -20,47 +20,47 @@ from collections import deque
 import signal
 import sys
 
-# ==================== 配置 ====================
+# ==================== Configuration ====================
 
 UPSTREAM_URL = os.getenv("UPSTREAM_URL", "http://10.42.53.44:8000")
 PORT = int(os.getenv("PORT", "8000"))
 HOST = os.getenv("HOST", "0.0.0.0")
 
-# 超时配置
+# Timeout configuration
 TIMEOUT = float(os.getenv("TIMEOUT", "300"))
 CONNECT_TIMEOUT = float(os.getenv("CONNECT_TIMEOUT", "30"))
 
-# 重试配置
+# Retry configuration
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 RETRY_DELAY = float(os.getenv("RETRY_DELAY", "1"))
 
-# 限流配置
+# Rate limiting configuration
 RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
-RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "100"))  # 每分钟请求数
-RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW", "60"))  # 时间窗口(秒)
+RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "100"))  # Requests per minute
+RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW", "60"))  # Time window (seconds)
 
-# 熔断配置
+# Circuit breaker configuration
 CIRCUIT_BREAKER_ENABLED = os.getenv("CIRCUIT_BREAKER_ENABLED", "true").lower() == "true"
-CIRCUIT_BREAKER_THRESHOLD = int(os.getenv("CIRCUIT_BREAKER_THRESHOLD", "5"))  # 失败阈值
-CIRCUIT_BREAKER_TIMEOUT = int(os.getenv("CIRCUIT_BREAKER_TIMEOUT", "60"))  # 熔断恢复时间(秒)
+CIRCUIT_BREAKER_THRESHOLD = int(os.getenv("CIRCUIT_BREAKER_THRESHOLD", "5"))  # Failure threshold
+CIRCUIT_BREAKER_TIMEOUT = int(os.getenv("CIRCUIT_BREAKER_TIMEOUT", "60"))  # Recovery timeout (seconds)
 
-# 日志配置
+# Logging configuration
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_FILE = os.getenv("LOG_FILE", "logs/proxy.log")
 REQUEST_LOG_ENABLED = os.getenv("REQUEST_LOG_ENABLED", "true").lower() == "true"
 
-# 监控配置
+# Monitoring configuration
 METRICS_ENABLED = os.getenv("METRICS_ENABLED", "true").lower() == "true"
 
-# 优雅关闭配置
-SHUTDOWN_TIMEOUT = int(os.getenv("SHUTDOWN_TIMEOUT", "30"))  # 优雅关闭超时(秒)
+# Graceful shutdown configuration
+SHUTDOWN_TIMEOUT = int(os.getenv("SHUTDOWN_TIMEOUT", "30"))  # Graceful shutdown timeout (seconds)
 
-# ==================== 日志设置 ====================
+# ==================== Logging setup ====================
 
-# 创建日志目录
+# Create log directory
 os.makedirs(os.path.dirname(LOG_FILE) if os.path.dirname(LOG_FILE) else ".", exist_ok=True)
 
-# 配置日志
+# Configure logging
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL.upper()),
     format='%(asctime)s | %(levelname)-8s | %(name)s | %(message)s',
@@ -72,10 +72,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ==================== 监控指标 ====================
+# ==================== Monitoring metrics ====================
 
 class Metrics:
-    """Prometheus 风格指标收集"""
+    """Prometheus-style metrics collection"""
 
     def __init__(self):
         self.requests_total = 0
@@ -91,10 +91,10 @@ class Metrics:
         self.circuit_breaker_trips = 0
         self.start_time = time.time()
 
-        # 按状态码统计
+        # Statistics by status code
         self.status_codes: Dict[int, int] = {}
 
-        # 按路径统计
+        # Statistics by path
         self.path_stats: Dict[str, int] = {}
 
     def record_request(self, path: str):
@@ -131,7 +131,7 @@ class Metrics:
         self.circuit_breaker_trips += 1
 
     def get_prometheus_metrics(self) -> str:
-        """导出 Prometheus 格式指标"""
+        """Export Prometheus format metrics"""
         uptime = time.time() - self.start_time
         avg_latency = (self.latency_total / self.latency_count) if self.latency_count > 0 else 0
 
@@ -181,13 +181,13 @@ class Metrics:
             f"proxy_uptime_seconds {uptime:.0f}",
         ]
 
-        # 状态码分布
+        # Status code distribution
         metrics.append("\n# HELP proxy_response_status Response status codes")
         metrics.append("# TYPE proxy_response_status counter")
         for code, count in self.status_codes.items():
             metrics.append(f'proxy_response_status{{status_code="{code}"}} {count}')
 
-        # 路径统计
+        # Path statistics
         metrics.append("\n# HELP proxy_path_requests Requests per path")
         metrics.append("# TYPE proxy_path_requests counter")
         for path, count in self.path_stats.items():
@@ -197,7 +197,7 @@ class Metrics:
         return "\n".join(metrics)
 
     def get_stats(self) -> Dict[str, Any]:
-        """获取统计信息"""
+        """Get statistics"""
         uptime = time.time() - self.start_time
         avg_latency = (self.latency_total / self.latency_count) if self.latency_count > 0 else 0
 
@@ -223,14 +223,14 @@ class Metrics:
         }
 
 
-# 全局指标实例
+# Global metrics instance
 metrics = Metrics()
 
 
-# ==================== 熔断器 ====================
+# ==================== Circuit Breaker ====================
 
 class CircuitBreaker:
-    """熔断器 - 防止雪崩效应"""
+    """Circuit breaker - prevent cascading failures"""
 
     def __init__(self, threshold: int, timeout: int):
         self.threshold = threshold
@@ -244,7 +244,7 @@ class CircuitBreaker:
         async with self._lock:
             if self.state == "half_open":
                 self.state = "closed"
-                logger.info("熔断器恢复到关闭状态")
+                logger.info("Circuit breaker recovered to closed state")
             self.failure_count = 0
 
     async def record_failure(self):
@@ -255,19 +255,19 @@ class CircuitBreaker:
             if self.failure_count >= self.threshold and self.state != "open":
                 self.state = "open"
                 metrics.record_circuit_breaker_trip()
-                logger.error(f"熔断器打开！失败次数: {self.failure_count}")
+                logger.error(f"Circuit breaker opened! Failures: {self.failure_count}")
 
     async def can_request(self) -> bool:
-        """检查是否可以发送请求"""
+        """Check if request can be sent"""
         async with self._lock:
             if self.state == "closed":
                 return True
 
             if self.state == "open":
-                # 检查是否可以尝试恢复
+                # Check if recovery can be attempted
                 if time.time() - self.last_failure_time >= self.timeout:
                     self.state = "half_open"
-                    logger.info("熔断器进入半开状态，尝试恢复")
+                    logger.info("Circuit breaker entering half-open state, attempting recovery")
                     return True
                 return False
 
@@ -286,14 +286,14 @@ class CircuitBreaker:
         }
 
 
-# 全局熔断器
+# Global circuit breaker
 circuit_breaker = CircuitBreaker(CIRCUIT_BREAKER_THRESHOLD, CIRCUIT_BREAKER_TIMEOUT) if CIRCUIT_BREAKER_ENABLED else None
 
 
-# ==================== 限流器 ====================
+# ==================== Rate Limiter ====================
 
 class RateLimiter:
-    """滑动窗口限流器"""
+    """Sliding window rate limiter"""
 
     def __init__(self, requests: int, window: int):
         self.requests = requests
@@ -303,25 +303,25 @@ class RateLimiter:
     async def is_allowed(self, client_id: str) -> bool:
         now = time.time()
 
-        # 获取或创建客户端记录
+        # Get or create client record
         if client_id not in self.clients:
             self.clients[client_id] = deque()
 
-        # 移除过期记录
+        # Remove expired records
         client_requests = self.clients[client_id]
         while client_requests and client_requests[0] < now - self.window:
             client_requests.popleft()
 
-        # 检查是否超过限制
+        # Check if limit exceeded
         if len(client_requests) >= self.requests:
             return False
 
-        # 记录本次请求
+        # Record this request
         client_requests.append(now)
         return True
 
     def cleanup(self):
-        """清理过期数据"""
+        """Clean expired data"""
         now = time.time()
         for client_id in list(self.clients.keys()):
             client_requests = self.clients[client_id]
@@ -331,14 +331,14 @@ class RateLimiter:
                 del self.clients[client_id]
 
 
-# 全局限流器
+# Global rate limiter
 rate_limiter = RateLimiter(RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW) if RATE_LIMIT_ENABLED else None
 
 
-# ==================== 请求日志 ====================
+# ==================== Request Logging ====================
 
 class RequestLogger:
-    """请求日志记录"""
+    """Request logger"""
 
     def __init__(self, enabled: bool = True):
         self.enabled = enabled
@@ -366,17 +366,17 @@ class RequestLogger:
             with open(self.log_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
         except Exception as e:
-            logger.error(f"写入请求日志失败: {e}")
+            logger.error(f"Failed to write request log: {e}")
 
 
-# 全局请求日志记录器
+# 全局Request logger器
 request_logger = RequestLogger(REQUEST_LOG_ENABLED)
 
 
-# ==================== HTTP 客户端 ====================
+# ==================== HTTP Client ====================
 
 class ProxyClient:
-    """带连接池的 HTTP 客户端"""
+    """HTTP client with connection pool"""
 
     def __init__(self):
         self.timeout = httpx.Timeout(
@@ -393,7 +393,7 @@ class ProxyClient:
         self.client: Optional[httpx.AsyncClient] = None
 
     async def init(self):
-        """初始化客户端"""
+        """Initialize client"""
         self.client = httpx.AsyncClient(
             timeout=self.timeout,
             verify=False,
@@ -402,14 +402,14 @@ class ProxyClient:
         )
 
     async def close(self):
-        """关闭客户端"""
+        """Close client"""
         if self.client:
             await self.client.aclose()
 
     async def request(self, method: str, url: str, **kwargs):
-        """发送请求（带重试）"""
+        """Send request (with retry)"""
         if not self.client:
-            raise RuntimeError("客户端未初始化")
+            raise RuntimeError("Client not initialized")
 
         last_error = None
         for attempt in range(MAX_RETRIES):
@@ -438,71 +438,71 @@ class ProxyClient:
                 last_error = e
                 raise
 
-        # 所有重试都失败
+        # All retries failed
         raise last_error
 
     async def stream(self, method: str, url: str, **kwargs):
-        """流式请求"""
+        """Streaming request"""
         if not self.client:
-            raise RuntimeError("客户端未初始化")
+            raise RuntimeError("Client not initialized")
         return self.client.stream(method, url, **kwargs)
 
 
-# 全局客户端实例
+# Global client instance
 proxy_client = ProxyClient()
 
 
-# ==================== 生命周期管理 ====================
+# ==================== Lifecycle Management ====================
 
 shutdown_event = asyncio.Event()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期管理"""
-    # 启动
+    """Application lifecycle management"""
+    # Startup
     logger.info("=" * 60)
-    logger.info("OpenAI Proxy 服务器启动中...")
-    logger.info(f"上游地址: {UPSTREAM_URL}")
-    logger.info(f"监听地址: {HOST}:{PORT}")
-    logger.info(f"日志级别: {LOG_LEVEL}")
-    logger.info(f"限流: {'启用' if RATE_LIMIT_ENABLED else '禁用'}")
-    logger.info(f"熔断: {'启用' if CIRCUIT_BREAKER_ENABLED else '禁用'}")
+    logger.info("OpenAI Proxy Server Starting...")
+    logger.info(f"Upstream: {UPSTREAM_URL}")
+    logger.info(f"Listen: {HOST}:{PORT}")
+    logger.info(f"Log Level: {LOG_LEVEL}")
+    logger.info(f"Rate Limit: {'Enabled' if RATE_LIMIT_ENABLED else 'Disabled'}")
+    logger.info(f"Circuit Breaker: {'Enabled' if CIRCUIT_BREAKER_ENABLED else 'Disabled'}")
     logger.info("=" * 60)
 
-    # 初始化 HTTP 客户端
+    # Initialize HTTP client
     await proxy_client.init()
 
-    # 启动清理任务
+    # StartupCleanup Task
     cleanup_task = asyncio.create_task(cleanup_loop())
 
     yield
 
-    # 关闭
-    logger.info("正在关闭代理服务器...")
+    # Shutdown
+    logger.info("Shutting down proxy server...")
     shutdown_event.set()
 
-    # 等待现有请求完成
-    logger.info(f"等待现有请求完成 (最多 {SHUTDOWN_TIMEOUT} 秒)...")
+    # Wait for active requests
+    logger.info(f"Waiting for active requests to complete (max {SHUTDOWN_TIMEOUT}s)...")
     for _ in range(SHUTDOWN_TIMEOUT * 10):
         if metrics.requests_active == 0:
             break
         await asyncio.sleep(0.1)
 
     if metrics.requests_active > 0:
-        logger.warning(f"关闭超时，仍有 {metrics.requests_active} 个活跃请求")
+        logger.warning(f"Shutdown timeout, {metrics.requests_active} active requests remaining")
 
-    # 取消清理任务
+    # Cancel cleanup task
     cleanup_task.cancel()
     try:
         await cleanup_task
     except asyncio.CancelledError:
         pass
 
-    # 关闭 HTTP 客户端
+    # Close HTTP client
     await proxy_client.close()
 
-    logger.info("代理服务器已关闭")
+    logger.info("Proxy server shutdown complete")
 
 
 app = FastAPI(
@@ -511,7 +511,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# 添加中间件
+# Add middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -522,28 +522,28 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
-# ==================== 清理任务 ====================
+# ==================== Cleanup Task ====================
 
 async def cleanup_loop():
-    """定期清理任务"""
+    """Periodic cleanup task"""
     while not shutdown_event.is_set():
         try:
-            await asyncio.sleep(60)  # 每分钟清理一次
+            await asyncio.sleep(60)  # Clean every minute
 
-            # 清理限流器过期数据
+            # Clean rate limiter expired data
             if rate_limiter:
                 rate_limiter.cleanup()
 
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.error(f"清理任务错误: {e}")
+            logger.error(f"Cleanup task error: {e}")
 
 
-# ==================== 路由 ====================
+# ==================== Routes ====================
 
 def get_client_ip(request: Request) -> str:
-    """获取客户端 IP"""
+    """Get client IP"""
     forwarded = request.headers.get("X-Forwarded-For")
     if forwarded:
         return forwarded.split(",")[0].strip()
@@ -552,7 +552,7 @@ def get_client_ip(request: Request) -> str:
 
 @app.get("/")
 async def root():
-    """健康检查"""
+    """Health check"""
     upstream_status = "unknown"
     upstream_latency = 0
 
@@ -563,7 +563,7 @@ async def root():
         upstream_status = "healthy" if response.status_code < 500 else "degraded"
     except Exception as e:
         upstream_status = "unreachable"
-        logger.warning(f"上游健康检查失败: {e}")
+        logger.warning(f"Upstream health check failed: {e}")
 
     return {
         "service": "OpenAI Proxy",
@@ -577,14 +577,14 @@ async def root():
 
 @app.get("/health")
 async def health():
-    """详细健康检查"""
+    """Detailed health check"""
     health_info = {
         "service": "OpenAI Proxy",
         "status": "healthy",
         "upstream": UPSTREAM_URL,
     }
 
-    # 检查上游连接
+    # Check upstream connection
     try:
         start = time.time()
         response = await proxy_client.client.get(f"{UPSTREAM_URL}/", timeout=5)
@@ -596,11 +596,11 @@ async def health():
         health_info["upstream_status"] = "unreachable"
         health_info["upstream_error"] = str(e)
 
-    # 熔断器状态
+    # Circuit Breaker状态
     if circuit_breaker:
         health_info["circuit_breaker"] = circuit_breaker.get_state()
 
-    # 活跃请求
+    # Active requests
     health_info["active_requests"] = metrics.requests_active
 
     status_code = 200 if health_info["upstream_status"] == "healthy" else 503
@@ -609,15 +609,15 @@ async def health():
 
 @app.get("/metrics")
 async def prometheus_metrics():
-    """Prometheus 指标"""
+    """Prometheus metrics"""
     if not METRICS_ENABLED:
-        raise HTTPException(status_code=404, detail="指标未启用")
+        raise HTTPException(status_code=404, detail="Metrics not enabled")
     return Response(content=metrics.get_prometheus_metrics(), media_type="text/plain")
 
 
 @app.get("/stats")
 async def stats():
-    """统计信息"""
+    """Statistics"""
     return {
         **metrics.get_stats(),
         "circuit_breaker": circuit_breaker.get_state() if circuit_breaker else None,
@@ -626,61 +626,61 @@ async def stats():
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
 async def proxy(request: Request, path: str):
-    """通用代理"""
+    """Generic proxy"""
 
-    # 生成请求 ID
+    # Generate request ID
     request_id = str(uuid.uuid4())[:8]
     client_ip = get_client_ip(request)
     start_time = time.time()
 
-    # 构建 URL
+    # Build URL
     url = f"{UPSTREAM_URL.rstrip('/')}/{path.lstrip('/')}"
     if request.url.query:
         url += f"?{request.url.query}"
 
-    # 准备请求头
+    # Prepare headers
     headers = dict(request.headers)
     headers.pop("host", None)
     headers.pop("content-length", None)
 
-    # OPTIONS 预检
+    # OPTIONS preflight
     if request.method == "OPTIONS":
         return Response(status_code=200)
 
-    # 获取请求体
+    # Get request body
     body = await request.body()
 
-    # 限流检查
+    # Rate limit check
     if rate_limiter:
         if not await rate_limiter.is_allowed(client_ip):
-            logger.warning(f"限流触发: {client_ip}")
+            logger.warning(f"Rate limit triggered: {client_ip}")
             request_logger.log(
                 request_id, request.method, path, 429,
                 time.time() - start_time, client_ip, "Rate limited"
             )
             return JSONResponse(
                 status_code=429,
-                content={"error": {"message": "请求过于频繁，请稍后再试", "type": "rate_limit_error"}}
+                content={"error": {"message": "Too many requests, please try again later", "type": "rate_limit_error"}}
             )
 
-    # 熔断器检查
+    # Circuit Breaker检查
     if circuit_breaker:
         if not await circuit_breaker.can_request():
-            logger.warning(f"熔断器打开，拒绝请求: {request_id}")
+            logger.warning(f"Circuit breaker open, request rejected: {request_id}")
             request_logger.log(
                 request_id, request.method, path, 503,
                 time.time() - start_time, client_ip, "Circuit breaker open"
             )
             return JSONResponse(
                 status_code=503,
-                content={"error": {"message": "服务暂时不可用，请稍后再试", "type": "service_unavailable"}}
+                content={"error": {"message": "Service temporarily unavailable, please try again later", "type": "service_unavailable"}}
             )
 
-    # 记录请求开始
+    # Record request start
     metrics.record_request(f"/{path}")
 
     try:
-        # 检查是否为流式请求
+        # Check if streaming request
         is_stream = False
         if body:
             try:
@@ -690,8 +690,8 @@ async def proxy(request: Request, path: str):
                 pass
 
         if is_stream:
-            # 流式响应
-            logger.info(f"[{request_id}] 流式请求: {request.method} /{path}")
+            # Streaming response
+            logger.info(f"[{request_id}] Streaming request: {request.method} /{path}")
             metrics.record_streaming_start()
 
             async def stream_generator():
@@ -705,17 +705,17 @@ async def proxy(request: Request, path: str):
                         async for chunk in response.aiter_bytes():
                             yield chunk
 
-                        # 成功完成
+                        # Completed successfully
                         if circuit_breaker:
                             await circuit_breaker.record_success()
 
                 except Exception as e:
-                    logger.error(f"[{request_id}] 流式传输错误: {e}")
+                    logger.error(f"[{request_id}] Streaming error: {e}")
                     metrics.record_upstream_error()
                     if circuit_breaker:
                         await circuit_breaker.record_failure()
-                    # 发送错误到客户端
-                    yield f"data: {json.dumps({'error': {'message': f'流式传输错误: {str(e)}', 'type': 'stream_error'}})}\n\n".encode()
+                    # Send error to client
+                    yield f"data: {json.dumps({'error': {'message': f'Streaming transfer error: {str(e)}', 'type': 'stream_error'}})}\n\n".encode()
 
                 finally:
                     metrics.record_streaming_end()
@@ -729,8 +729,8 @@ async def proxy(request: Request, path: str):
             )
 
         else:
-            # 普通响应
-            logger.info(f"[{request_id}] 请求: {request.method} /{path}")
+            # Regular response
+            logger.info(f"[{request_id}] Request: {request.method} /{path}")
 
             response = await proxy_client.request(
                 method=request.method,
@@ -739,7 +739,7 @@ async def proxy(request: Request, path: str):
                 headers=headers,
             )
 
-            # 记录成功
+            # Record success
             if circuit_breaker:
                 await circuit_breaker.record_success()
 
@@ -747,7 +747,7 @@ async def proxy(request: Request, path: str):
             metrics.record_response(response.status_code, latency)
             request_logger.log(request_id, request.method, path, response.status_code, latency, client_ip)
 
-            logger.debug(f"[{request_id}] 响应: {response.status_code} ({latency*1000:.0f}ms)")
+            logger.debug(f"[{request_id}] Response: {response.status_code} ({latency*1000:.0f}ms)")
 
             return Response(
                 content=response.content,
@@ -765,17 +765,17 @@ async def proxy(request: Request, path: str):
         if circuit_breaker:
             await circuit_breaker.record_failure()
 
-        logger.error(f"[{request_id}] 代理错误: {e}")
+        logger.error(f"[{request_id}] Proxy error: {e}")
         request_logger.log(request_id, request.method, path, 500, latency, client_ip, str(e))
 
-        raise HTTPException(status_code=500, detail=f"代理内部错误: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal proxy error: {str(e)}")
 
 
-# ==================== 信号处理 ====================
+# ==================== Signal handling ====================
 
 def handle_signal(signum, frame):
-    """处理关闭信号"""
-    logger.info(f"收到信号 {signum}，开始优雅关闭...")
+    """处理Shutdown信号"""
+    logger.info(f"Received signal {signum}, starting graceful shutdown...")
     shutdown_event.set()
 
 
@@ -784,62 +784,62 @@ signal.signal(signal.SIGINT, handle_signal)
 
 
 def when_ready(server):
-    """Gunicorn 启动完成回调"""
-    print("OpenAI Proxy 已就绪，开始接受请求...")
+    """Gunicorn Startup完成回调"""
+    print("OpenAI Proxy ready, accepting requests...")
 
 
 def worker_int(worker):
-    """Worker 收到 SIGINT 信号"""
+    """Worker received SIGINT signal"""
     print(f"Worker {worker.pid} 收到中断信号")
 
 
 def pre_fork(server, worker):
-    """Worker fork 前的钩子"""
+    """Pre-fork hook"""
     pass
 
 
 def post_fork(server, worker):
-    """Worker fork 后的钩子"""
-    print(f"Worker {worker.pid} 已启动")
+    """Post-fork hook"""
+    print(f"Worker {worker.pid} started")
 
 
 def pre_exec(server):
-    """在新的 master 进程中执行前的钩子"""
-    print("新的 master 进程已创建")
+    """Pre-exec hook in new master process"""
+    print("New master process created")
 
 
 def pre_request(worker, req):
-    """请求处理前的钩子"""
+    """Pre-request hook"""
     worker.log.debug(f"{req.method} {req.path}")
 
 
 def post_request(worker, req, environ, resp):
-    """请求处理后的钩子"""
+    """Post-request hook"""
     pass
 
 
 def child_exit(server, worker):
-    """子进程退出的钩子"""
-    print(f"Worker {worker.pid} 已退出")
+    """Child exit hook"""
+    print(f"Worker {worker.pid} exited")
 
 
 def worker_abort(worker):
-    """Worker 异常退出的钩子"""
-    print(f"Worker {worker.pid} 异常退出")
+    """Worker abnormal exit hook"""
+    print(f"Worker {worker.pid} exited abnormally")
 
 
 def nworkers_changed(server, new_value, old_value):
-    """Worker 数量变化的钩子"""
-    print(f"Worker 数量: {old_value} -> {new_value}")
+    """Worker count change hook"""
+    print(f"Worker count: {old_value} -> {new_value}")
 
 
 def on_exit(server):
-    """服务器退出时的钩子"""
-    print("服务器正在关闭...")
+    """Server exit hook"""
+    print("Server shutting down...")
 
 
 if __name__ == "__main__":
-    # 单进程开发模式
+    # Single process dev mode
     import uvicorn
 
     uvicorn.run(

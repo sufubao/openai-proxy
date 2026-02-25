@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-多实例管理脚本
-支持同时运行多个代理实例，每个实例对应不同的上游服务器
+Multi-instance Management Script
+Manage multiple proxy instances, each connecting to a different upstream server
 """
 import os
 import sys
@@ -19,13 +19,13 @@ LOG_DIR = "logs"
 
 
 def read_instances():
-    """读取实例配置"""
+    """Read instance configuration"""
     instances = []
     config_path = Path(CONFIG_FILE)
 
     if not config_path.exists():
-        print(f"错误: 配置文件 {CONFIG_FILE} 不存在")
-        print("请先创建配置文件，格式: NAME|PORT|UPSTREAM_URL")
+        print(f"Error: Config file {CONFIG_FILE} not found")
+        print("Please create config file, format: NAME|PORT|UPSTREAM_URL")
         sys.exit(1)
 
     with open(config_path) as f:
@@ -35,7 +35,7 @@ def read_instances():
                 continue
             parts = line.split("|")
             if len(parts) != 3:
-                print(f"警告: 跳过无效配置行: {line}")
+                print(f"Warning: Skipping invalid config line: {line}")
                 continue
             name, port, upstream = parts
             instances.append({
@@ -66,16 +66,16 @@ def start_instance(instance):
     pid_file = get_pid_file(name)
     log_file = get_log_file(name)
 
-    # 检查是否已运行
+    # Check if already running
     if pid_file.exists():
         with open(pid_file) as f:
             pid = int(f.read().strip())
         try:
-            os.kill(pid, 0)  # 检查进程是否存在
-            print(f"  [{name}] 已运行 (PID: {pid}, 端口: {port})")
+            os.kill(pid, 0)  # Check if process exists
+            print(f"  [{name}] Already running (PID: {pid}, Port: {port})")
             return False
         except OSError:
-            pid_file.unlink()  # 进程已不存在，删除 PID 文件
+            pid_file.unlink()  # Process doesn't exist, remove PID file
 
     # 启动进程
     env = os.environ.copy()
@@ -99,12 +99,12 @@ def start_instance(instance):
         start_new_session=True,
     )
 
-    # 写入 PID 文件
+    # Write PID file
     pid_file.parent.mkdir(parents=True, exist_ok=True)
     with open(pid_file, "w") as f:
         f.write(str(proc.pid))
 
-    print(f"  [{name}] 启动成功 (PID: {proc.pid}, 端口: {port}, 上游: {upstream})")
+    print(f"  [{name}] Started (PID: {proc.pid}, Port: {port}, Upstream: {upstream})")
     return True
 
 
@@ -116,18 +116,18 @@ def stop_instance(instance):
     pid_file = get_pid_file(name)
 
     if not pid_file.exists():
-        print(f"  [{name}] 未运行")
+        print(f"  [{name}] Not running")
         return False
 
     with open(pid_file) as f:
         pid = int(f.read().strip())
 
     try:
-        # 先尝试优雅停止
+        # Try graceful shutdown first
         os.kill(pid, signal.SIGTERM)
-        print(f"  [{name}] 发送停止信号 (PID: {pid})")
+        print(f"  [{name}] Sent stop signal (PID: {pid})")
 
-        # 等待进程结束
+        # Wait for process to end
         for _ in range(30):
             try:
                 os.kill(pid, 0)
@@ -135,38 +135,38 @@ def stop_instance(instance):
             except OSError:
                 break
         else:
-            # 超时强制停止
+            # Force kill on timeout
             os.kill(pid, signal.SIGKILL)
-            print(f"  [{name}] 强制停止")
+            print(f"  [{name}] Force killed")
 
         pid_file.unlink()
-        print(f"  [{name}] 已停止")
+        print(f"  [{name}] Stopped")
         return True
 
     except OSError as e:
-        print(f"  [{name}] 停止失败: {e}")
+        print(f"  [{name}] Stop failed: {e}")
         pid_file.unlink()
         return False
 
 
 def restart_instance(instance):
-    """重启单个实例"""
+    """Restart single instance"""
     name = instance["name"]
-    print(f"  [{name}] 重启中...")
+    print(f"  [{name}] Restarting...")
     stop_instance(instance)
     time.sleep(2)
     return start_instance(instance)
 
 
 def status_instance(instance):
-    """查询单个实例状态"""
+    """Query single instance status"""
     name = instance["name"]
     port = instance["port"]
     upstream = instance["upstream"]
 
     pid_file = get_pid_file(name)
 
-    status = "停止"
+    status = "Stopped"
     pid = "-"
 
     if pid_file.exists():
@@ -174,17 +174,17 @@ def status_instance(instance):
             pid = f.read().strip()
         try:
             os.kill(int(pid), 0)
-            status = "运行中"
+            status = "Running"
         except OSError:
-            status = "停止 (PID 文件过期)"
-            pid = f"{pid} (过期)"
+            status = "Stopped (stale PID)"
+            pid = f"{pid} (stale)"
 
-    print(f"  [{name}] {status} | PID: {pid} | 端口: {port} | 上游: {upstream}")
+    print(f"  [{name}] {status} | PID: {pid} | Port: {port} | Upstream: {upstream}")
 
 
 def cmd_start():
-    """启动所有实例"""
-    print("启动代理实例...")
+    """Start all instances"""
+    print("Starting proxy instances...")
     instances = read_instances()
 
     Path(PID_DIR).mkdir(exist_ok=True)
@@ -194,14 +194,14 @@ def cmd_start():
     for inst in instances:
         if start_instance(inst):
             started += 1
-        time.sleep(1)  # 错开启动时间
+        time.sleep(1)  # Stagger startup
 
-    print(f"\n已启动 {started}/{len(instances)} 个实例")
+    print(f"\nStarted {started}/{len(instances)} instances")
 
 
 def cmd_stop():
-    """停止所有实例"""
-    print("停止代理实例...")
+    """Stop all instances"""
+    print("Stopping proxy instances...")
     instances = read_instances()
 
     stopped = 0
@@ -209,23 +209,23 @@ def cmd_stop():
         if stop_instance(inst):
             stopped += 1
 
-    print(f"\n已停止 {stopped}/{len(instances)} 个实例")
+    print(f"\nStopped {stopped}/{len(instances)} instances")
 
 
 def cmd_restart():
-    """重启所有实例"""
-    print("重启代理实例...")
+    """Restart all instances"""
+    print("Restarting proxy instances...")
     instances = read_instances()
 
     for inst in instances:
         restart_instance(inst)
 
-    print(f"\n已重启 {len(instances)} 个实例")
+    print(f"\nRestarted {len(instances)} instances")
 
 
 def cmd_status():
-    """查看所有实例状态"""
-    print("代理实例状态:")
+    """Show all instances status"""
+    print("Proxy Instances Status:")
     print("-" * 80)
     instances = read_instances()
 
@@ -236,38 +236,38 @@ def cmd_status():
 
 
 def cmd_logs(instance_name=None):
-    """查看日志"""
+    """View logs"""
     instances = read_instances()
 
     if instance_name:
         instances = [i for i in instances if i["name"] == instance_name]
         if not instances:
-            print(f"错误: 实例 '{instance_name}' 不存在")
+            print(f"Error: Instance '{instance_name}' not found")
             return
 
     for inst in instances:
         log_file = get_log_file(inst["name"])
-        print(f"\n=== {inst['name']} 日志 (最后 20 行) ===")
+        print(f"\n=== {inst['name']} Logs (last 20 lines) ===")
         if log_file.exists():
             subprocess.run(["tail", "-20", str(log_file)])
         else:
-            print("日志文件不存在")
+            print("Log file not found")
 
 
 def main():
     if len(sys.argv) < 2:
-        print("OpenAI 代理多实例管理")
+        print("OpenAI Proxy Multi-Instance Manager")
         print()
-        print("用法: python multi-proxy.py COMMAND [INSTANCE]")
+        print("Usage: python multi-proxy.py COMMAND [INSTANCE]")
         print()
-        print("命令:")
-        print("  start [NAME]   启动实例 (未指定 NAME 则启动全部)")
-        print("  stop [NAME]    停止实例")
-        print("  restart [NAME] 重启实例")
-        print("  status         查看状态")
-        print("  logs [NAME]    查看日志")
+        print("Commands:")
+        print("  start [NAME]   Start instance(s)")
+        print("  stop [NAME]    Stop instance(s)")
+        print("  restart [NAME] Restart instance(s)")
+        print("  status         Show status")
+        print("  logs [NAME]    View logs")
         print()
-        print("配置文件: instances.conf")
+        print("Config file: instances.conf")
         sys.exit(1)
 
     command = sys.argv[1].lower()
@@ -277,7 +277,7 @@ def main():
         if instance_name:
             instances = [i for i in read_instances() if i["name"] == instance_name]
             if not instances:
-                print(f"错误: 实例 '{instance_name}' 不存在")
+                print(f"Error: Instance '{instance_name}' not found")
                 sys.exit(1)
             for inst in instances:
                 start_instance(inst)
@@ -288,7 +288,7 @@ def main():
         if instance_name:
             instances = [i for i in read_instances() if i["name"] == instance_name]
             if not instances:
-                print(f"错误: 实例 '{instance_name}' 不存在")
+                print(f"Error: Instance '{instance_name}' not found")
                 sys.exit(1)
             for inst in instances:
                 stop_instance(inst)
@@ -299,7 +299,7 @@ def main():
         if instance_name:
             instances = [i for i in read_instances() if i["name"] == instance_name]
             if not instances:
-                print(f"错误: 实例 '{instance_name}' 不存在")
+                print(f"Error: Instance '{instance_name}' not found")
                 sys.exit(1)
             for inst in instances:
                 restart_instance(inst)
@@ -313,7 +313,7 @@ def main():
         cmd_logs(instance_name)
 
     else:
-        print(f"未知命令: {command}")
+        print(f"Unknown command: {command}")
         sys.exit(1)
 
 
