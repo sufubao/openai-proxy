@@ -783,7 +783,63 @@ signal.signal(signal.SIGTERM, handle_signal)
 signal.signal(signal.SIGINT, handle_signal)
 
 
+def when_ready(server):
+    """Gunicorn 启动完成回调"""
+    print("OpenAI Proxy 已就绪，开始接受请求...")
+
+
+def worker_int(worker):
+    """Worker 收到 SIGINT 信号"""
+    print(f"Worker {worker.pid} 收到中断信号")
+
+
+def pre_fork(server, worker):
+    """Worker fork 前的钩子"""
+    pass
+
+
+def post_fork(server, worker):
+    """Worker fork 后的钩子"""
+    print(f"Worker {worker.pid} 已启动")
+
+
+def pre_exec(server):
+    """在新的 master 进程中执行前的钩子"""
+    print("新的 master 进程已创建")
+
+
+def pre_request(worker, req):
+    """请求处理前的钩子"""
+    worker.log.debug(f"{req.method} {req.path}")
+
+
+def post_request(worker, req, environ, resp):
+    """请求处理后的钩子"""
+    pass
+
+
+def child_exit(server, worker):
+    """子进程退出的钩子"""
+    print(f"Worker {worker.pid} 已退出")
+
+
+def worker_abort(worker):
+    """Worker 异常退出的钩子"""
+    print(f"Worker {worker.pid} 异常退出")
+
+
+def nworkers_changed(server, new_value, old_value):
+    """Worker 数量变化的钩子"""
+    print(f"Worker 数量: {old_value} -> {new_value}")
+
+
+def on_exit(server):
+    """服务器退出时的钩子"""
+    print("服务器正在关闭...")
+
+
 if __name__ == "__main__":
+    # 单进程开发模式
     import uvicorn
 
     uvicorn.run(

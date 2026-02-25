@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # 复制代码
 COPY main.py .
+COPY gunicorn_config.py .
 
 # 创建日志目录
 RUN mkdir -p logs
@@ -25,8 +26,8 @@ USER proxy
 EXPOSE 8000
 
 # 健康检查
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
 
-# 启动命令
-CMD ["python", "main.py"]
+# 启动命令 (多进程)
+CMD ["gunicorn", "-c", "gunicorn_config.py", "main:app"]
